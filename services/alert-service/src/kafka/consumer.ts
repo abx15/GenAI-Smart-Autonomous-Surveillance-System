@@ -1,55 +1,64 @@
 import { Kafka } from 'kafkajs';
-import { env, logger } from '../config/env';
-import { rateLimiter } from '../services/rateLimiter';
-import { alertBroadcaster } from '../services/alertBroadcaster';
+import { Server } from 'socket.io';
 import { Alert } from '../models/Alert';
+import { shouldSend } from '../services/rateLimiter';
+import { broadcastAlert } from '../websocket/broadcaster';
+import { logger } from '../../../shared/utils/logger';
+import { validateEnv } from '../config/env';
 
-const kafka = new Kafka({
-  clientId: 'alert-service',
-  brokers: env.KAFKA_BROKERS,
-});
+const env = validateEnv();
 
-const consumer = kafka.consumer({ groupId: 'alert-service-group' });
+export async function startKafkaConsumer(io: Server): Promise<void> {
+  const kafka = new Kafka({
+    clientId: 'alert-service',
+    brokers: env.KAFKA_BROKERS.split(','),
+  });
 
-export const startKafkaConsumer = async () => {
-  try {
-    await consumer.connect();
-    logger.info('✅ Kafka Consumer connected successfully.');
+  const consumer = kafka.consumer({ groupId: 'alert-service-group' });
+  await consumer.connect();
+  await consumer.subscribe({ topics: [env.KAFKA_TOPIC_EVENTS, env.KAFKA_TOPIC_ALERTS], fromBeginning: false });
 
-    await consumer.subscribe({ topic: 'processed.events', fromBeginning: false });
-    await consumer.subscribe({ topic: 'alerts.triggered', fromBeginning: false });
+  await consumer.run({
+    eachMessage: async ({ topic, message }) => {
+      try {
+        if (!message.value) return;
+        const payload = JSON.parse(message.value.toString());
 
-    await consumer.run({
-      eachMessage: async ({ topic, partition, message }) => {
-        try {
-          if (!message.value) return;
+        // Only send if rate limit allows
+        if (!shouldSend(payload.trackId || payload.personTrackId || 0, payload.type)) return;
 
-          const event = JSON.parse(message.value.toString());
-          logger.debug(`Received message from ${topic}`, event);
+        // Build alert object
+        const alert = {
+          alertId: crypto.randomUUID(),
+          eventId: payload.eventId,
+          message: payload.message || buildMessage(payload),
+          severity: payload.severity,
+          type: payload.type,
+          cameraId: payload.cameraId,
+          trackId: payload.trackId || payload.personTrackId,
+          timestamp: new Date().toISOString(),
+        };
 
-          // Rate limit check
-          if (rateLimiter.shouldSend(event)) {
-            // Broadcast
-            const formattedAlert = alertBroadcaster.broadcast(event);
+        // Save to MongoDB
+        await Alert.create(alert);
 
-            // Save to DB
-            try {
-              await Alert.create(formattedAlert);
-            } catch (dbErr) {
-              logger.error('Failed to save alert to MongoDB', dbErr);
-            }
-          }
-        } catch (err) {
-          logger.error(`Error processing message from topic ${topic}:`, err);
-        }
-      },
-    });
-  } catch (error) {
-    logger.error('❌ Failed to start Kafka consumer:', error);
-    // Don't crash service
-  }
-};
+        // Broadcast via Socket.IO
+        broadcastAlert(io, alert);
 
-export const stopKafkaConsumer = async () => {
-  await consumer.disconnect();
-};
+      } catch (err) {
+        logger.error({ err }, 'Alert consumer processing error');
+      }
+    },
+  });
+
+  logger.info('Alert Kafka consumer running');
+}
+
+function buildMessage(event: any): string {
+  const msgs: Record<string, string> = {
+    intrusion: `🚨 Intrusion on ${event.cameraId} — Person ID: ${event.personTrackId}`,
+    loitering: `⚠️ Loitering on ${event.cameraId} — Person ID: ${event.personTrackId}`,
+    zone_entry: `📍 Zone entry on ${event.cameraId}`,
+  };
+  return msgs[event.type] || `Surveillance alert on ${event.cameraId}`;
+}

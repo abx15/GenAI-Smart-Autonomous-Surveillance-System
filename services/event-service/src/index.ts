@@ -1,85 +1,52 @@
-import express from 'express';
-import mongoose from 'mongoose';
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { connectDB } from '../../shared/config/db';
+import { logger } from '../../shared/utils/logger';
+import { startKafkaConsumer } from './kafka/consumer';
+import { initKafkaProducer } from './kafka/producer';
+import { eventRoutes } from './api/routes';
+import { startLoiteringCleanup } from './services/loiteringTracker';
+import { validateEnv } from './config/env';
 import dns from 'dns';
 
-// DNS override for MongoDB Atlas
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-const app = express();
-const PORT = process.env.PORT || 3002;
+const env = validateEnv();
 
-// Middleware
-app.use(express.json());
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  next();
-});
+const app = Fastify({ logger: false });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'event-service', timestamp: new Date().toISOString() });
-});
+async function bootstrap() {
+  // Register plugins
+  await app.register(cors, { origin: env.CORS_ORIGINS.split(',') });
 
-// Event routes
-app.get('/api/events', async (req, res) => {
-  try {
-    // Mock data for now
-    const events = [
-      {
-        eventId: 'event-001',
-        type: 'intrusion',
-        severity: 'critical',
-        cameraId: 'CAM-01',
-        zoneId: 'zone-001',
-        trackId: 1,
-        startTime: new Date(),
-        resolved: false
-      }
-    ];
-    res.json({ success: true, data: events });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+  // Register routes
+  await app.register(eventRoutes, { prefix: '/' });
 
-app.get('/api/events/stats', async (req, res) => {
-  try {
-    // Mock stats
-    const stats = {
-      total: 20,
-      critical: 3,
-      cameras: 3,
-      tracked: 12
-    };
-    res.json({ success: true, data: stats });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+  // Connect DB
+  await connectDB(env.MONGODB_URI);
 
-// MongoDB connection
-async function connectDB() {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI!, {
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-      family: 4,
-    });
-    console.log('✅ Event Service - MongoDB connected');
-  } catch (error) {
-    console.error('❌ Event Service - MongoDB connection failed:', error);
-  }
+  // Start Kafka
+  await initKafkaProducer();
+  await startKafkaConsumer();
+
+  // Start loitering cleanup interval
+  startLoiteringCleanup();
+
+  // Start server
+  await app.listen({ port: env.PORT, host: '0.0.0.0' });
+  logger.info({ port: env.PORT }, '✅ Event Service started');
 }
 
-// Start server
-async function startServer() {
-  await connectDB();
-  
-  app.listen(PORT, () => {
-    console.log(`🚀 Event Service running on port ${PORT}`);
-  });
+// Graceful shutdown
+async function shutdown() {
+  logger.info('Shutting down event service...');
+  await app.close();
+  process.exit(0);
 }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
-startServer().catch(console.error);
+bootstrap().catch((err) => {
+  logger.fatal({ err }, 'Failed to start event service');
+  process.exit(1);
+});

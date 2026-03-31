@@ -1,17 +1,17 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { env } from '../config/env';
+import { ChatOpenAI } from '@langchain/openai';
+import { validateEnv } from '../config/env';
 
-/**
- * OpenAI Client Singleton
- * Model: gpt-4o
- * Configured for factual, low-creativity responses (temperature 0.3)
- */
-export const llm = new ChatOpenAI({
-  openAIApiKey: env.OPENAI_API_KEY,
-  modelName: "gpt-4o",
-  temperature: 0.3,
-  maxTokens: 1024,
-  verbose: env.NODE_ENV !== 'production'
-});
+let _llm: ChatOpenAI | null = null;
 
-export default llm;
+export function getLLM(): ChatOpenAI {
+  if (!_llm) {
+    const env = validateEnv();
+    _llm = new ChatOpenAI({
+      modelName: env.OPENAI_MODEL,
+      temperature: env.OPENAI_TEMPERATURE,
+      maxTokens: env.OPENAI_MAX_TOKENS,
+      openAIApiKey: env.OPENAI_API_KEY,
+    });
+  }
+  return _llm;
+}

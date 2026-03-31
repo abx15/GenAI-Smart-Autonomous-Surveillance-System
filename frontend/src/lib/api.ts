@@ -1,32 +1,29 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL + '/api',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
   timeout: 30000,
 });
 
-// Request interceptor: attach JWT
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('sass_access_token');
+  const token = localStorage.getItem('accessToken');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Response interceptor: handle 401 (token refresh)
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
     if (err.response?.status === 401) {
-      // Try refresh
-      const refresh = localStorage.getItem('sass_refresh_token');
+      const refresh = localStorage.getItem('refreshToken');
       if (refresh) {
         try {
           const { data } = await axios.post(
-            process.env.NEXT_PUBLIC_API_URL + '/api/auth/refresh',
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/auth/refresh`,
             { refreshToken: refresh }
           );
-          localStorage.setItem('sass_access_token', data.accessToken);
-          err.config.headers.Authorization = `Bearer ${data.accessToken}`;
+          localStorage.setItem('accessToken', data.data.accessToken);
+          err.config.headers.Authorization = `Bearer ${data.data.accessToken}`;
           return axios(err.config);
         } catch {
           localStorage.clear();

@@ -1,64 +1,30 @@
 import { Server } from 'socket.io';
-import { FastifyInstance } from 'fastify';
-import { env, logger } from '../config/env';
+import { logger } from '../../../shared/utils/logger';
 import { alertHistory } from '../services/alertHistory';
-import { joinAllAlertsRoom, joinCameraRoom, joinSeverityRoom } from './rooms';
 
-export let io: Server;
+export function initSocketServer(io: Server) {
+  const alertsNsp = io.of('/alerts');
 
-export const initWebSocket = (fastify: FastifyInstance) => {
-  io = fastify.io; // assuming fastify-socket.io plugin attaches `io` to fastify
+  alertsNsp.on('connection', (socket) => {
+    logger.info({ socketId: socket.id }, 'Client connected to /alerts');
 
-  // Auth Middleware
-  io.use(async (socket, next) => {
-    try {
-      const token = socket.handshake.query.token as string;
-      if (!token) {
-        return next(new Error('Authentication error: No token provided'));
-      }
-      
-      // We assume fastify.jwt plugin is registered and can verify
-      // But verify() is async or sync. Using standard fastify jwt verify method
-      const decoded = fastify.jwt.verify(token);
-      (socket as any).user = decoded;
-      next();
-    } catch (err: any) {
-      logger.error('Socket authentication failed:', err.message);
-      next(new Error('Authentication error'));
-    }
-  });
+    // Send recent history on connect
+    const history = alertHistory.getLast(20);
+    if (history.length) socket.emit('alert_history', history);
 
-  const alertsNamespace = io.of('/alerts');
-  const streamNamespace = io.of('/stream');
-
-  alertsNamespace.on('connection', (socket) => {
-    logger.info(`Client connected to /alerts: ${socket.id}`);
-    
-    // Automatically join all alerts room on connection
-    joinAllAlertsRoom(socket);
-
-    // Provide initial state
-    const recentAlerts = alertHistory.getLast(20);
-    socket.emit('initial_state', recentAlerts);
-
+    // Join rooms
     socket.on('join_camera', (cameraId: string) => {
-      joinCameraRoom(socket, cameraId);
+      socket.join(`camera:${cameraId}`);
     });
 
     socket.on('join_severity', (severity: string) => {
-      joinSeverityRoom(socket, severity);
+      socket.join(`severity:${severity}`);
     });
 
     socket.on('disconnect', () => {
-      logger.info(`Client disconnected from /alerts: ${socket.id}`);
+      logger.info({ socketId: socket.id }, 'Client disconnected from /alerts');
     });
   });
 
-  streamNamespace.on('connection', (socket) => {
-    logger.info(`Client connected to /stream: ${socket.id}`);
-    
-    socket.on('disconnect', () => {
-      logger.info(`Client disconnected from /stream: ${socket.id}`);
-    });
-  });
-};
+  logger.info('Socket.IO /alerts namespace initialized');
+}

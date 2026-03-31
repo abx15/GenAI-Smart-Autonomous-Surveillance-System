@@ -1,92 +1,82 @@
-"use client";
-
-import React, { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Shield, Lock, User, Loader2, ArrowRight } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "../../../components/ui/card";
-import { Button } from "../../../components/ui/button";
+'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button, Input, Card, CardBody, CardHeader } from '@heroui/react';
+import api from '@/lib/api';
+import { useAuthStore } from '@/store/auth';
 
 export default function LoginPage() {
-  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const setUser = useAuthStore(state => state.setUser);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setIsLoading(true);
-    // Simulate login
-    setTimeout(() => {
-      localStorage.setItem("sass_token", "mock_token");
-      localStorage.setItem("sass_user", JSON.stringify({ userId: "1", username: "admin", role: "admin" }));
-      router.push("/dashboard");
-    }, 1500);
-  };
+    if (!email || !password) { setError('Both fields required'); return; }
+    setLoading(true); setError('');
+    try {
+      const { data } = await api.post('/auth/login', { email, password });
+      setUser(data.data.user);
+      localStorage.setItem('accessToken', data.data.accessToken);
+      localStorage.setItem('refreshToken', data.data.refreshToken);
+      router.push('/dashboard');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4 relative overflow-hidden">
-      {/* Background Matrix-like glow */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-primary/5 blur-[120px] rounded-full pointer-events-none" />
-      
-      <div className="w-full max-w-md relative z-10 space-y-8">
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 border border-primary/20 mb-4">
-             <Shield className="w-8 h-8 text-primary" />
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] p-4">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-[#1e1e35] border border-[#2e2e45] mb-4">
+            <span className="text-2xl font-mono text-[#4d9fff]">SASS</span>
           </div>
-          <h1 className="text-3xl font-mono tracking-[0.3em] font-bold text-primary uppercase">SASS CORE</h1>
-          <p className="text-[10px] font-mono text-muted uppercase tracking-widest italic">Secure Access Surveillance System // Tactical Node</p>
+          <h1 className="text-3xl font-mono tracking-[0.3em] font-bold text-[#f0f0f5] uppercase">SASS CORE</h1>
+          <p className="text-xs font-mono text-[#555577] uppercase tracking-widest">Secure Access Surveillance System</p>
         </div>
 
-        <Card className="border-card-border/50 bg-card/60 backdrop-blur-sm">
-          <CardHeader className="text-center">
-            <CardTitle className="text-sm font-mono tracking-widest">AUTHENTICATION REQUIRED</CardTitle>
-            <CardDescription className="text-[10px] font-mono uppercase">Level 4 Clearance Encrypted Link</CardDescription>
+        <Card className="bg-[#0f0f1a] border border-[#1e1e35]">
+          <CardHeader className="text-center pb-4">
+            <h2 className="text-sm font-mono tracking-widest text-[#f0f0f5]">AUTHENTICATION</h2>
+            <p className="text-[10px] font-mono text-[#555577] uppercase">Enter credentials to access system</p>
           </CardHeader>
-          <CardContent>
+          <CardBody>
             <form onSubmit={handleLogin} className="space-y-4">
-              <div className="space-y-2">
-                <div className="relative">
-                  <User className="absolute left-3 top-3 w-4 h-4 text-muted" />
-                  <input 
-                    className="w-full bg-black/40 border border-card-border p-3 pl-10 text-xs font-mono focus:outline-none focus:border-primary transition-all text-primary placeholder:text-muted"
-                    placeholder="OPERATOR_ID"
-                    required
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3 w-4 h-4 text-muted" />
-                  <input 
-                    type="password"
-                    className="w-full bg-black/40 border border-card-border p-3 pl-10 text-xs font-mono focus:outline-none focus:border-primary transition-all text-primary placeholder:text-muted"
-                    placeholder="SECURITY_KEY"
-                    required
-                  />
-                </div>
-              </div>
-              <Button type="submit" className="w-full h-12 gap-2" disabled={isLoading}>
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <span>INITIATE UPLINK</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
+              <Input
+                label="Email"
+                type="email"
+                value={email}
+                onValueChange={setEmail}
+                classNames={{ input: 'font-mono text-sm', inputWrapper: 'bg-[#161625] border-[#1e1e35]' }}
+                required
+              />
+              <Input
+                label="Password"
+                type="password"
+                value={password}
+                onValueChange={setPassword}
+                classNames={{ input: 'font-mono text-sm', inputWrapper: 'bg-[#161625] border-[#1e1e35]' }}
+                required
+              />
+              {error && <p className="text-sm text-[#ff3b3b] font-mono">{error}</p>}
+              <Button type="submit" isLoading={loading}
+                className="bg-[#4d9fff] text-white w-full">
+                {loading ? 'Authenticating...' : 'Login'}
               </Button>
             </form>
-          </CardContent>
-          <CardFooter className="flex justify-center border-t border-card-border/30 pt-6">
-             <p className="text-[9px] font-mono text-muted uppercase">
-               Don't have access? <Link href="/register" className="text-primary hover:underline">Request Credentials</Link>
-             </p>
-          </CardFooter>
+          </CardBody>
         </Card>
 
         <div className="text-center">
-           <div className="text-[9px] font-mono text-muted/50 uppercase tracking-tighter">
-             WARNING: UNAUTHORIZED ACCESS IS LOGGED AND TRACED BY SYSTEM KERNEL.
-           </div>
+          <p className="text-[9px] font-mono text-[#555577]">
+            Need access? <a href="/register" className="text-[#4d9fff] hover:underline">Request credentials</a>
+          </p>
         </div>
       </div>
     </div>

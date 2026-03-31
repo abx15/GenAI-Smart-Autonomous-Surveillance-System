@@ -1,119 +1,87 @@
-import { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import { QueryService } from '../services/queryService';
-import { SummaryService } from '../services/summaryService';
-import { ReportService } from '../services/reportService';
+import { FastifyInstance } from 'fastify';
+import { handleQuery } from '../services/queryService';
 import { Conversation } from '../models/Conversation';
-import { SurveillanceEvent } from '../models/SurveillanceEvent';
+import { logger } from '../../../shared/utils/logger';
 
-export default async function routes(fastify: FastifyInstance, options: FastifyPluginOptions) {
-  
+export async function aiRoutes(app: FastifyInstance) {
+
+  app.get('/health', async () => ({
+    success: true,
+    data: { status: 'ok', service: 'genai-service', timestamp: new Date().toISOString() }
+  }));
+
   // POST /query
-  fastify.post('/query', {
-    onRequest: [fastify.authenticate],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['query'],
-        properties: {
-          query: { type: 'string' },
-          cameraId: { type: 'string' },
-          conversationId: { type: 'string' }
-        }
-      }
-    }
-  }, async (request, reply) => {
-    const { query, cameraId, conversationId } = request.body as any;
-    const userId = (request.user as any).userId || 'anonymous';
-
+  app.post('/query', async (req, reply) => {
     try {
-      const result = await QueryService.handleQuery(userId, query, cameraId, conversationId);
-      return result;
-    } catch (error: any) {
-      request.log.error(error);
-      return reply.status(503).send({ error: 'OpenAI Service Unavailable', message: error.message });
+      const { query, cameraId, conversationId } = req.body as any;
+      if (!query?.trim()) {
+        return reply.status(400).send({ success: false, error: 'INVALID_INPUT', message: 'Query is required' });
+      }
+
+      // Get userId from JWT (if auth middleware present) or default
+      const userId = (req as any).user?.userId || 'anonymous';
+
+      const result = await handleQuery({ userId, query, cameraId, conversationId });
+      return { success: true, ...result };
+    } catch (err: any) {
+      logger.error({ err }, 'POST /query failed');
+      return reply.status(500).send({ success: false, error: 'AI_ERROR', message: err.message });
     }
   });
 
   // POST /summarize
-  fastify.post('/summarize', {
-    onRequest: [fastify.authenticate],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['eventId'],
-        properties: {
-          eventId: { type: 'string' }
-        }
-      }
-    }
-  }, async (request, reply) => {
-    const { eventId } = request.body as any;
-    
-    const event = await SurveillanceEvent.findOne({ id: eventId });
-    if (!event) return reply.status(404).send({ error: 'Event not found' });
-
+  app.post('/summarize', async (req, reply) => {
     try {
-      const summary = await SummaryService.summarizeEvent(event);
-      return { summary };
-    } catch (error: any) {
-      return reply.status(503).send({ error: 'Summarization Failed', message: error.message });
+      const { eventId } = req.body as any;
+      if (!eventId) return reply.status(400).send({ success: false, error: 'INVALID_INPUT', message: 'eventId required' });
+
+      const Event = (await import('mongoose')).default.model('Event');
+      const event = await Event.findOne({ eventId }).lean();
+      if (!event) return reply.status(404).send({ success: false, error: 'NOT_FOUND', message: 'Event not found' });
+
+      const result = await handleQuery({
+        userId: 'system',
+        query: `Summarize this event in one sentence for a security officer: ${JSON.stringify(event)}`,
+      });
+
+      return { success: true, data: { summary: result.response } };
+    } catch (err: any) {
+      return reply.status(500).send({ success: false, error: 'AI_ERROR', message: err.message });
     }
   });
 
   // POST /report
-  fastify.post('/report', {
-    onRequest: [fastify.authenticate],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['shiftStart', 'shiftEnd'],
-        properties: {
-          shiftStart: { type: 'string', format: 'date-time' },
-          shiftEnd: { type: 'string', format: 'date-time' }
-        }
-      }
-    }
-  }, async (request, reply) => {
-    const { shiftStart, shiftEnd } = request.body as any;
-
+  app.post('/report', async (req, reply) => {
     try {
-      const report = await ReportService.generateShiftReport(new Date(shiftStart), new Date(shiftEnd));
-      return { report: report.content, stats: report.stats };
-    } catch (error: any) {
-      return reply.status(503).send({ error: 'Report Generation Failed', message: error.message });
+      const { shiftStart, shiftEnd } = req.body as any;
+      const query = `Generate a security shift report for the period from ${shiftStart} to ${shiftEnd}. Include all events, key incidents, and recommendations.`;
+      const result = await handleQuery({ userId: 'system', query });
+      return { success: true, data: { report: result.response, generatedAt: new Date().toISOString() } };
+    } catch (err: any) {
+      return reply.status(500).send({ success: false, error: 'AI_ERROR', message: err.message });
     }
   });
 
   // GET /conversations/:userId
-  fastify.get('/conversations/:userId', {
-    onRequest: [fastify.authenticate]
-  }, async (request, reply) => {
-    const { userId } = request.params as any;
-    const authenticatedUserId = (request.user as any).userId;
-
-    if (userId !== authenticatedUserId && (request.user as any).role !== 'admin') {
-      return reply.status(403).send({ error: 'Unauthorized profile access' });
+  app.get('/conversations/:userId', async (req, reply) => {
+    try {
+      const { userId } = req.params as any;
+      const conversations = await Conversation.find({ userId })
+        .sort({ updatedAt: -1 }).select('-messages').lean();
+      return { success: true, data: conversations };
+    } catch (err) {
+      return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Failed to fetch conversations' });
     }
-
-    const conversations = await Conversation.find({ userId }).sort({ updatedAt: -1 });
-    return { conversations };
   });
 
   // DELETE /conversations/:conversationId
-  fastify.delete('/conversations/:conversationId', {
-    onRequest: [fastify.authenticate]
-  }, async (request, reply) => {
-    const { conversationId } = request.params as any;
-    const userId = (request.user as any).userId;
-
-    const result = await Conversation.deleteOne({ conversationId, userId });
-    if (result.deletedCount === 0) return reply.status(404).send({ error: 'Conversation not found' });
-
-    return { success: true };
-  });
-
-  // GET /health
-  fastify.get('/health', async () => {
-    return { status: 'ok', service: 'genai-service', timestamp: new Date() };
+  app.delete('/conversations/:conversationId', async (req, reply) => {
+    try {
+      const { conversationId } = req.params as any;
+      await Conversation.findOneAndDelete({ conversationId });
+      return { success: true, message: 'Conversation deleted' };
+    } catch (err) {
+      return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Failed to delete conversation' });
+    }
   });
 }

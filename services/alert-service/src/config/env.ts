@@ -1,39 +1,26 @@
 import { z } from 'zod';
-import dotenv from 'dotenv';
-import pino from 'pino';
 
-// Default to development if not set
-process.env.NODE_ENV = process.env.NODE_ENV || 'development';
-
-if (process.env.NODE_ENV !== 'production') {
-  dotenv.config();
-}
-
-export const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  transport: process.env.NODE_ENV !== 'production' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true
-    }
-  } : undefined
-});
-
-const envSchema = z.object({
-  PORT: z.string().default('3003'),
+const schema = z.object({
+  PORT: z.coerce.number().default(3003),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  MONGO_URI: z.string().url(),
-  KAFKA_BROKERS: z.string().transform((str) => str.split(',')),
-  JWT_SECRET: z.string().min(10),
-  CORS_ORIGIN: z.string().default('*')
+  MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
+  KAFKA_BROKERS: z.string().default('localhost:9092'),
+  KAFKA_CLIENT_ID: z.string().default('alert-service'),
+  KAFKA_GROUP_ID: z.string().default('alert-service-group'),
+  KAFKA_TOPIC_EVENTS: z.string().default('processed.events'),
+  KAFKA_TOPIC_ALERTS: z.string().default('alerts.triggered'),
+  CORS_ORIGINS: z.string().default('http://localhost:3006'),
+  ALERT_RATE_LIMIT_SECONDS: z.coerce.number().default(10),
 });
 
-const _env = envSchema.safeParse(process.env);
+export type Env = z.infer<typeof schema>;
 
-if (!_env.success) {
-  logger.error('❌ Invalid environment variables');
-  logger.error(_env.error.format());
-  process.exit(1);
+export function validateEnv(): Env {
+  const result = schema.safeParse(process.env);
+  if (!result.success) {
+    console.error('❌ Invalid environment variables:');
+    console.error(result.error.flatten().fieldErrors);
+    process.exit(1);
+  }
+  return result.data;
 }
-
-export const env = _env.data;

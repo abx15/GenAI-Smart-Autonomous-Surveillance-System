@@ -1,76 +1,28 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import mongoose from 'mongoose';
-import { env, logger } from './config/env';
-import routes from './api/routes';
+import jwt from '@fastify/jwt';
+import { connectDB } from '../../shared/config/db';
+import { logger } from '../../shared/utils/logger';
+import { authRoutes } from './api/routes';
+import { validateEnv } from './config/env';
+import dns from 'dns';
 
-const fastify = Fastify({
-  logger: false, // Custom logger handled manually
-  requestIdHeader: 'x-request-id',
-});
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-// Plugins registration
-fastify.register(cors, {
-  origin: '*', // Adjust for production
-});
+const env = validateEnv();
+const app = Fastify({ logger: false });
 
-// Routes registration
-fastify.register(routes, { prefix: '/auth' });
+async function bootstrap() {
+  await app.register(cors, { origin: env.CORS_ORIGINS.split(',') });
+  await app.register(jwt, { secret: env.JWT_SECRET });
+  await app.register(authRoutes, { prefix: '/' });
+  await connectDB(env.MONGODB_URI);
 
-// Global Error Handler
-fastify.setErrorHandler((error, request, reply) => {
-  logger.error({
-    msg: error.message,
-    stack: error.stack,
-    requestId: request.id,
-  });
+  await app.listen({ port: env.PORT, host: '0.0.0.0' });
+  logger.info({ port: env.PORT }, '✅ Auth Service started');
+}
 
-  if (error.validation) {
-    return reply.status(400).send({
-      statusCode: 400,
-      error: 'Bad Request',
-      message: error.message,
-      requestId: request.id,
-    });
-  }
+process.on('SIGTERM', async () => { await app.close(); process.exit(0); });
+process.on('SIGINT', async () => { await app.close(); process.exit(0); });
 
-  const statusCode = error.statusCode || 500;
-  return reply.status(statusCode).send({
-    statusCode,
-    error: error.name || 'Internal Server Error',
-    message: error.message || 'Something went wrong',
-    requestId: request.id,
-  });
-});
-
-/**
- * Start Server
- */
-const start = async () => {
-  try {
-    // 1. Connect MongoDB
-    await mongoose.connect(env.MONGODB_URI);
-    logger.info('✅ Successfully connected to MongoDB');
-
-    // 2. Listen
-    const port = parseInt(env.PORT, 10);
-    await fastify.listen({ port, host: '0.0.0.0' });
-    logger.info(`🚀 Auth Service is listening on http://0.0.0.0:${port}`);
-  } catch (err) {
-    logger.error('❌ Failed to start server:', err);
-    process.exit(1);
-  }
-};
-
-// Graceful Shutdown
-const shutdown = async () => {
-  logger.info('Shutting down gracefully...');
-  await fastify.close();
-  await mongoose.disconnect();
-  process.exit(0);
-};
-
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
-
-start();
+bootstrap().catch((err) => { logger.fatal({ err }, 'Auth service failed'); process.exit(1); });

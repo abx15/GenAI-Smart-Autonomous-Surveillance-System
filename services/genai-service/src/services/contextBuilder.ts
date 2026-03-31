@@ -1,110 +1,60 @@
-import { SurveillanceEvent, ISurveillanceEvent } from '../models/SurveillanceEvent';
+import mongoose from 'mongoose';
 
-export interface TimeRange {
-  startTime: Date;
-  endTime: Date;
+// Reference event-service Event model by collection name
+const EventCollection = mongoose.connection.collection.bind(mongoose.connection);
+
+function parseTimeRange(query: string): { startTime: Date; endTime: Date; label: string } {
+  const now = new Date();
+  const lower = query.toLowerCase();
+
+  const minuteMatch = lower.match(/last\s+(\d+)\s*min/);
+  const hourMatch = lower.match(/last\s+(\d+)\s*hour/);
+  const todayMatch = lower.match(/today|aaj/);
+  const weekMatch = lower.match(/week|hafta/);
+
+  if (minuteMatch) {
+    const mins = parseInt(minuteMatch[1]);
+    return { startTime: new Date(now.getTime() - mins * 60000), endTime: now, label: `last ${mins} minutes` };
+  }
+  if (hourMatch) {
+    const hrs = parseInt(hourMatch[1]);
+    return { startTime: new Date(now.getTime() - hrs * 3600000), endTime: now, label: `last ${hrs} hours` };
+  }
+  if (todayMatch) {
+    const start = new Date(now); start.setHours(0,0,0,0);
+    return { startTime: start, endTime: now, label: 'today' };
+  }
+  if (weekMatch) {
+    return { startTime: new Date(now.getTime() - 7 * 86400000), endTime: now, label: 'last 7 days' };
+  }
+
+  // Default: last 30 minutes
+  return { startTime: new Date(now.getTime() - 30 * 60000), endTime: now, label: 'last 30 minutes' };
 }
 
-/**
- * Service for building the RAG context from surveillance events.
- */
-export class ContextBuilder {
-  /**
-   * Parse natural language time queries.
-   * Supports: "last 10 minutes", "past 1 hour", "today", "between 2pm and 3pm"
-   */
-  public static parseTimeQuery(query: string): TimeRange {
-    const now = new Date();
-    let startTime = new Date(now.getTime() - 30 * 60 * 1000); // Default: last 30 mins
-    let endTime = now;
+export async function buildContext(query: string, cameraId?: string) {
+  const timeRange = parseTimeRange(query);
 
-    const lowerQuery = query.toLowerCase();
+  const filter: any = { startTime: { $gte: timeRange.startTime, $lte: timeRange.endTime } };
+  if (cameraId) filter.cameraId = cameraId;
 
-    // "last X minutes" / "past X minutes"
-    const minMatch = lowerQuery.match(/(?:last|past)\s+(\d+)\s+min(?:ute)?s?/);
-    if (minMatch) {
-      const mins = parseInt(minMatch[1], 10);
-      startTime = new Date(now.getTime() - mins * 60 * 1000);
-      return { startTime, endTime };
-    }
+  // Use direct mongoose model lookup
+  const Event = mongoose.models['Event'] || mongoose.model('Event', new mongoose.Schema({}, { strict: false }), 'events');
+  const events = await Event.find(filter)
+    .sort({ severity: -1, startTime: -1 })
+    .limit(50)
+    .lean();
 
-    // "last X hours" / "past X hours"
-    const hourMatch = lowerQuery.match(/(?:last|past)\s+(\d+)\s+hour?s?/);
-    if (hourMatch) {
-      const hours = parseInt(hourMatch[1], 10);
-      startTime = new Date(now.getTime() - hours * 60 * 60 * 1000);
-      return { startTime, endTime };
-    }
+  const formatted = events.map((e: any) => ({
+    time: new Date(e.startTime).toLocaleTimeString(),
+    type: e.type,
+    severity: e.severity,
+    camera: e.cameraId,
+    zone: e.zoneName || e.zoneId || 'Unknown',
+    description: e.description || `${e.type} detected`,
+    duration: e.duration ? `${e.duration}s` : null,
+    resolved: e.resolved,
+  }));
 
-    // "today"
-    if (lowerQuery.includes('today')) {
-      startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      return { startTime, endTime };
-    }
-
-    // "between 2pm and 3pm" (Simple relative to today)
-    const betweenMatch = lowerQuery.match(/between\s+(\d+)\s*(am|pm)\s+and\s+(\d+)\s*(am|pm)/i);
-    if (betweenMatch) {
-      const startHour = this.parseHour(betweenMatch[1], betweenMatch[2]);
-      const endHour = this.parseHour(betweenMatch[3], betweenMatch[4]);
-      
-      startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startHour);
-      endTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endHour);
-      return { startTime, endTime };
-    }
-
-    return { startTime, endTime };
-  }
-
-  private static parseHour(hourStr: string, ampm: string): number {
-    let hour = parseInt(hourStr, 10);
-    if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12;
-    if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0;
-    return hour;
-  }
-
-  /**
-   * Fetch events from MongoDB based on time and filters.
-   * Limited to 50 events for token management.
-   */
-  public static async fetchRelevantEvents(
-    startTime: Date, 
-    endTime: Date, 
-    filters: any = {}
-  ): Promise<ISurveillanceEvent[]> {
-    const query = {
-      startTime: { $gte: startTime, $lte: endTime },
-      ...filters
-    };
-
-    // Return max 50 events (sorted by severity desc, then time desc)
-    // Severity order: critical > high > medium > low
-    const severityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-
-    const events = await SurveillanceEvent.find(query)
-      .sort({ startTime: -1 }) // Recent first
-      .limit(100); // Get more than 50 to sort by severity manually if needed, or use $addFields
-
-    // In-memory sort by severity weight, then time
-    events.sort((a, b) => {
-      const sevA = severityOrder[a.severity] || 0;
-      const sevB = severityOrder[b.severity] || 0;
-      if (sevA !== sevB) return sevB - sevA;
-      return b.startTime.getTime() - a.startTime.getTime();
-    });
-
-    return events.slice(0, 50);
-  }
-
-  /**
-   * Format events into a string for the GPT prompt context.
-   */
-  public static formatEventsForPrompt(events: ISurveillanceEvent[]): string {
-    if (events.length === 0) return "No events found.";
-
-    return events.map(e => {
-      const time = e.startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      return `[${time}] - ${e.type.toUpperCase()} in ${e.zoneId} - Severity: ${e.severity} - Camera: ${e.cameraId} - ${e.description || 'No description'}`;
-    }).join('\n');
-  }
+  return { events: formatted, timeRange, count: events.length };
 }

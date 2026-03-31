@@ -1,34 +1,18 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
-export interface IMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-}
-
-export interface IConversation extends Document {
-  conversationId: string;
-  userId: string;
-  messages: IMessage[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const MessageSchema = new Schema<IMessage>({
-  role: { type: String, enum: ['system', 'user', 'assistant'], required: true },
-  content: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now }
-}, { _id: false });
-
-const ConversationSchema = new Schema<IConversation>({
-  conversationId: { type: String, required: true, unique: true },
-  userId: { type: String, required: true, index: true },
-  messages: { type: [MessageSchema], default: [] }
+const ConversationSchema = new Schema({
+  conversationId: { type: String, default: () => crypto.randomUUID(), unique: true },
+  userId: { type: String, required: true },
+  messages: [{
+    role: { type: String, enum: ['user', 'assistant'], required: true },
+    content: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now },
+  }],
 }, {
-  timestamps: true
+  timestamps: true,
 });
 
-// TTL 7 days (7 * 24 * 60 * 60 = 604800 seconds)
-ConversationSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 604800 });
+ConversationSchema.index({ userId: 1 });
+ConversationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 604800 }); // 7 days TTL
 
-export const Conversation = mongoose.model<IConversation>('Conversation', ConversationSchema);
+export const Conversation = mongoose.model('Conversation', ConversationSchema);

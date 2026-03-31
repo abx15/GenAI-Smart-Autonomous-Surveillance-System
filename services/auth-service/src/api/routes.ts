@@ -1,106 +1,114 @@
-import { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
-import { AuthService } from '../services/authService';
-import { TokenService } from '../services/tokenService';
-import { logger } from '../config/env';
+import { FastifyInstance } from 'fastify';
 import { User } from '../models/User';
+import { tokenService } from '../services/tokenService';
+import { z } from 'zod';
+import { logger } from '../../../shared/utils/logger';
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    user?: { userId: string, role: string };
-  }
-}
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8).regex(/[A-Z]/).regex(/[0-9]/),
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  role: z.enum(['admin','operator','viewer']).optional().default('viewer'),
+});
 
-export default async function (fastify: FastifyInstance, opts: FastifyPluginOptions) {
-  
-  // Middleware to ensure user is authenticated (using headers from Gateway)
-  const authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
-    const userId = request.headers['x-user-id'] as string;
-    const role = request.headers['x-user-role'] as string;
+export async function authRoutes(app: FastifyInstance) {
 
-    if (!userId || !role) {
-      return reply.status(401).send({ error: 'Unauthorized', message: 'Missing auth headers' });
-    }
+  app.get('/health', async () => ({
+    success: true,
+    data: { status: 'ok', service: 'auth-service', timestamp: new Date().toISOString() }
+  }));
 
-    request.user = { userId, role };
-  };
-
-  // Health check
-  fastify.get('/health', async () => {
-    return { status: 'ok', service: 'auth-service' };
-  });
-
-  // Register
-  fastify.post('/auth/register', async (request: FastifyRequest, reply: FastifyReply) => {
+  // POST /auth/register
+  app.post('/auth/register', async (req, reply) => {
     try {
-      const result = await AuthService.register(request.body);
-      return reply.status(201).send(result);
+      const body = registerSchema.parse(req.body);
+      const existing = await User.findOne({ email: body.email });
+      if (existing) return reply.status(409).send({ success: false, error: 'DUPLICATE', message: 'Email already registered' });
+
+      const user = await User.create(body);
+      const accessToken = tokenService.generateAccessToken(user.userId, user.role);
+      const refreshToken = tokenService.generateRefreshToken(user.userId);
+      user.refreshTokens.push(refreshToken);
+      await user.save();
+
+      return reply.status(201).send({
+        success: true,
+        data: { accessToken, refreshToken, user: { userId: user.userId, email: user.email, role: user.role, firstName: user.firstName, lastName: user.lastName } },
+      });
     } catch (err: any) {
-      logger.error('Registration error:', err.message);
-      return reply.status(400).send({ error: 'Registration failed', message: err.message });
+      if (err.name === 'ZodError') return reply.status(400).send({ success: false, error: 'VALIDATION', message: err.errors });
+      return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Registration failed' });
     }
   });
 
-  // Login
-  fastify.post('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
+  // POST /auth/login
+  app.post('/auth/login', async (req, reply) => {
     try {
-      const { email, password } = request.body as any;
-      const result = await AuthService.login(email, password);
-      return reply.status(200).send(result);
-    } catch (err: any) {
-      logger.error('Login error:', err.message);
-      return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
-    }
-  });
-
-  // Refresh
-  fastify.post('/auth/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { refreshToken } = request.body as any;
-      const result = await AuthService.refresh(refreshToken);
-      return reply.status(200).send(result);
-    } catch (err: any) {
-      logger.error('Refresh error:', err.message);
-      return reply.status(401).send({ error: 'Unauthorized', message: err.message });
-    }
-  });
-
-  // Logout (auth required)
-  fastify.post('/auth/logout', { preHandler: authenticate }, async (request, reply) => {
-    try {
-      const { refreshToken } = request.body as any;
-      const { userId } = request.user!;
-      await AuthService.logout(userId, refreshToken);
-      return reply.status(200).send({ message: 'Logged out successfully' });
-    } catch (err: any) {
-      logger.error('Logout error:', err.message);
-      return reply.status(400).send({ error: 'Logout failed', message: err.message });
-    }
-  });
-
-  // Profile (auth required)
-  fastify.get('/auth/me', { preHandler: authenticate }, async (request, reply) => {
-    try {
-      const { userId } = request.user!;
-      const user = await User.findOne({ userId });
-      if (!user) {
-        return reply.status(401).send({ error: 'Unauthorized', message: 'User not found' });
+      const { email, password } = req.body as any;
+      const user = await User.findOne({ email, active: true }).select('+password');
+      if (!user || !(await user.comparePassword(password))) {
+        return reply.status(401).send({ success: false, error: 'INVALID_CREDENTIALS', message: 'Invalid email or password' });
       }
-      return { user: user.toObject() };
-    } catch (err: any) {
-      return reply.status(500).send({ error: 'Internal Server Error', message: err.message });
+
+      const accessToken = tokenService.generateAccessToken(user.userId, user.role);
+      const refreshToken = tokenService.generateRefreshToken(user.userId);
+      user.refreshTokens = [...user.refreshTokens.slice(-4), refreshToken]; // keep last 5
+      user.lastLogin = new Date();
+      await user.save();
+
+      logger.info({ userId: user.userId }, 'User logged in');
+      return {
+        success: true,
+        data: { accessToken, refreshToken, user: { userId: user.userId, email: user.email, role: user.role, firstName: user.firstName, lastName: user.lastName } },
+      };
+    } catch (err) {
+      return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Login failed' });
     }
   });
 
-  // Change Password (auth required)
-  fastify.put('/auth/change-password', { preHandler: authenticate }, async (request, reply) => {
+  // POST /auth/refresh
+  app.post('/auth/refresh', async (req, reply) => {
     try {
-      const { userId } = request.user!;
-      const { oldPassword, newPassword } = request.body as any;
-      await AuthService.changePassword(userId, oldPassword, newPassword);
-      return { message: 'Password changed successfully' };
-    } catch (err: any) {
-      logger.error('Change password error:', err.message);
-      return reply.status(400).send({ error: 'Action failed', message: err.message });
+      const { refreshToken } = req.body as any;
+      const payload = tokenService.verifyRefreshToken(refreshToken);
+      if (!payload) return reply.status(401).send({ success: false, error: 'INVALID_TOKEN', message: 'Invalid refresh token' });
+
+      const user = await User.findOne({ userId: payload.userId, refreshTokens: refreshToken });
+      if (!user) return reply.status(401).send({ success: false, error: 'TOKEN_REVOKED', message: 'Token has been revoked' });
+
+      // Rotate tokens
+      const newAccess = tokenService.generateAccessToken(user.userId, user.role);
+      const newRefresh = tokenService.generateRefreshToken(user.userId);
+      user.refreshTokens = user.refreshTokens.filter((t: string) => t !== refreshToken);
+      user.refreshTokens.push(newRefresh);
+      await user.save();
+
+      return { success: true, data: { accessToken: newAccess, refreshToken: newRefresh } };
+    } catch (err) {
+      return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Token refresh failed' });
     }
+  });
+
+  // GET /auth/me — requires auth
+  app.get('/auth/me', {
+    preHandler: async (req, reply) => {
+      try { await req.jwtVerify(); } catch { reply.status(401).send({ success: false, error: 'UNAUTHORIZED' }); }
+    }
+  }, async (req, reply) => {
+    const { userId } = (req as any).user;
+    const user = await User.findOne({ userId }).lean();
+    if (!user) return reply.status(404).send({ success: false, error: 'NOT_FOUND' });
+    return { success: true, data: { userId: user.userId, email: user.email, role: user.role, firstName: user.firstName, lastName: user.lastName, lastLogin: user.lastLogin } };
+  });
+
+  // POST /auth/logout
+  app.post('/auth/logout', async (req, reply) => {
+    const { refreshToken } = req.body as any;
+    if (refreshToken) {
+      const payload = tokenService.verifyRefreshToken(refreshToken);
+      if (payload) await User.updateOne({ userId: payload.userId }, { $pull: { refreshTokens: refreshToken } });
+    }
+    return { success: true, message: 'Logged out successfully' };
   });
 }

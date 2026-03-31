@@ -1,130 +1,37 @@
 import Fastify from 'fastify';
-import fastifyJwt from '@fastify/jwt';
 import cors from '@fastify/cors';
-import mongoose from 'mongoose';
-import { env, logger } from './config/env';
-import { initWebSocket, io } from './websocket/server';
-import { startKafkaConsumer, stopKafkaConsumer } from './kafka/consumer';
-import { alertHistory } from './services/alertHistory';
-import { Alert } from './models/Alert';
+import socketio from '@fastify/socket.io';
+import { connectDB } from '../../shared/config/db';
+import { logger } from '../../shared/utils/logger';
+import { startKafkaConsumer } from './kafka/consumer';
+import { alertRoutes } from './api/routes';
+import { initSocketServer } from './websocket/server';
+import { validateEnv } from './config/env';
+import dns from 'dns';
 
-const fastify = Fastify({
-  logger: pinoLogger() // if needed, otherwise skip
-});
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-function pinoLogger() {
-    return false; // we use our custom pino logger manually
+const env = validateEnv();
+const app = Fastify({ logger: false });
+
+async function bootstrap() {
+  await app.register(cors, { origin: env.CORS_ORIGINS.split(',') });
+  await app.register(socketio, {
+    cors: { origin: env.CORS_ORIGINS.split(','), methods: ['GET', 'POST'] },
+    pingTimeout: 60000,
+    pingInterval: 25000,
+  });
+
+  await app.register(alertRoutes, { prefix: '/' });
+  await connectDB(env.MONGODB_URI);
+  initSocketServer(app.io);
+  await startKafkaConsumer(app.io);
+
+  await app.listen({ port: env.PORT, host: '0.0.0.0' });
+  logger.info({ port: env.PORT }, '✅ Alert Service started');
 }
 
-// Plugins
-fastify.register(cors, {
-  origin: env.CORS_ORIGIN,
-});
+process.on('SIGTERM', async () => { await app.close(); process.exit(0); });
+process.on('SIGINT', async () => { await app.close(); process.exit(0); });
 
-fastify.register(fastifyJwt, {
-  secret: env.JWT_SECRET,
-});
-
-fastify.register(socketioServer, {
-  cors: { origin: env.CORS_ORIGIN },
-  path: '/socket.io',
-  pingTimeout: 60000,
-  pingInterval: 25000
-});
-
-// Routes
-fastify.get('/health', async (request, reply) => {
-  return { status: 'ok', timestamp: new Date(), service: 'alert-service' };
-});
-
-fastify.get('/alerts/history', async (request, reply) => {
-  const query = request.query as { limit?: string };
-  const limit = parseInt(query.limit || '50', 10);
-  const alerts = await Alert.find().sort({ timestamp: -1 }).limit(limit);
-  return { alerts };
-});
-
-fastify.get('/alerts/unacknowledged', async (request, reply) => {
-  const alerts = await Alert.find({ acknowledged: false }).sort({ timestamp: -1 });
-  return { alerts };
-});
-
-fastify.put('/alerts/:alertId/acknowledge', async (request, reply) => {
-  const { alertId } = request.params as { alertId: string };
-  const alert = await Alert.findOneAndUpdate(
-    { alertId },
-    { acknowledged: true },
-    { new: true }
-  );
-  if (!alert) return reply.status(404).send({ error: 'Alert not found' });
-  
-  // optionally broadcast acknowledgment event via io if needed
-  // io.to('all-alerts').emit('alert_acknowledged', { alertId });
-
-  return { success: true, alert };
-});
-
-fastify.get('/stats/live', async (request, reply) => {
-  if (!io) return { error: 'socket.io not initialized yet' };
-
-  let activeConnections = 0;
-  io.of('/alerts').sockets.forEach(() => { activeConnections++; });
-  const roomsCount = io.of('/alerts').adapter.rooms.size;
-
-  return { activeConnections, roomsCount };
-});
-
-// App Lifecycle
-const startServer = async () => {
-  try {
-    // MongoDB
-    await mongoose.connect(env.MONGO_URI);
-    logger.info('✅ Connected to MongoDB');
-
-    // DB Init - restore history
-    try {
-      const recentAlerts = await Alert.find().sort({ timestamp: -1 }).limit(100);
-      recentAlerts.reverse().forEach(a => alertHistory.add(a.toObject()));
-    } catch (e) {
-      logger.error('Could not restore alert history from DB on startup', e);
-    }
-
-    // Socket Initialization
-    await fastify.ready();
-    initWebSocket(fastify);
-
-    // Kafka
-    await startKafkaConsumer();
-
-    // Start
-    const port = parseInt(env.PORT, 10);
-    await fastify.listen({ port, host: '0.0.0.0' });
-    logger.info(`🚀 Alert Service running on http://0.0.0.0:${port}`);
-  } catch (err) {
-    logger.error('❌ Failed to start server:', err);
-    process.exit(1);
-  }
-};
-
-// Shutdown
-const gracefulShutdown = async () => {
-  logger.info('Shutting down...');
-  
-  try {
-    const alerts = alertHistory.getAll();
-    // We already persist inside consumer, but maybe we want to save any unflushed
-    // Not strictly needed since each alert is saved when generated
-  } catch (err) {
-    logger.error('Error on graceful shutdown:', err);
-  }
-
-  await stopKafkaConsumer();
-  await fastify.close();
-  await mongoose.disconnect();
-  process.exit(0);
-};
-
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-
-startServer();
+bootstrap().catch((err) => { logger.fatal({ err }, 'Alert service failed'); process.exit(1); });

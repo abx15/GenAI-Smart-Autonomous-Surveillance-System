@@ -1,93 +1,90 @@
-import { v4 as uuidv4 } from 'uuid';
-import { llm } from '../llm/openai';
-import { queryPrompt } from '../prompts/query.prompt';
-import { ContextBuilder } from './contextBuilder';
-import { Conversation, IMessage } from '../models/Conversation';
-import { logger } from '../config/env';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import { getLLM } from '../llm/openai';
+import { buildContext } from './contextBuilder';
+import { Conversation } from '../models/Conversation';
+import { logger } from '../../../shared/utils/logger';
 
-export class QueryService {
-  /**
-   * Handle natural language queries about surveillance events.
-   * Orchestrates the RAG (Retrieval-Augmented Generation) flow.
-   */
-  public static async handleQuery(
-    userId: string, 
-    query: string, 
-    cameraIdFilter?: string,
-    conversationId?: string
-  ) {
-    const startTimeTracking = Date.now();
-    logger.info({ userId, query: query.substring(0, 100), cameraIdFilter }, 'Processing NL Query');
+const SYSTEM_PROMPT = `You are SASS-AI, an intelligent surveillance security assistant.
+You analyze security events from a real-time surveillance system.
 
-    // 1. Context Retrieval (RAG)
-    const timeRange = ContextBuilder.parseTimeQuery(query);
-    const filters = cameraIdFilter ? { cameraId: cameraIdFilter } : {};
-    const events = await ContextBuilder.fetchRelevantEvents(timeRange.startTime, timeRange.endTime, filters);
-    
-    const formattedEvents = ContextBuilder.formatEventsForPrompt(events);
-    const cameraCount = 10; // Placeholder: In a real system, fetch active camera count
+Current date/time: {currentTime}
+Camera system active: {cameraCount} cameras
 
-    // 2. Chat History Management
-    let conversation = await this.getOrCreateConversation(userId, conversationId);
-    const history = conversation.messages.slice(-5); // Include last 5 messages for continuity
+Surveillance events from {timeRange}:
+{events}
 
-    // 3. Prompt Execution
-    const response = await llm.invoke(
-      await queryPrompt.format({
-        currentTime: new Date().toLocaleString(),
-        cameraCount,
-        events: formattedEvents,
-        userQuery: query
-      })
-    );
+Rules:
+- Answer ONLY based on provided events — never hallucinate
+- If no events match, say "No incidents recorded in this period"
+- Highlight critical/high severity events first
+- Use readable timestamps (e.g., "at 2:34 PM")
+- Keep responses concise but complete
+- Respond in the same language as the user's question (Hindi/Hinglish/English)`;
 
-    const responseText = response.content as string;
+export async function handleQuery(params: {
+  userId: string;
+  query: string;
+  cameraId?: string;
+  conversationId?: string;
+}): Promise<{ response: string; eventsAnalyzed: number; timeRange: string; conversationId: string }> {
+  const start = Date.now();
 
-    // 4. Persistence (Conversation History)
-    await this.updateConversation(conversation, query, responseText);
+  // Build context
+  const ctx = await buildContext(params.query, params.cameraId);
 
-    const responseTimeMs = Date.now() - startTimeTracking;
-    logger.info({ 
-      userId, 
-      eventsAnalyzed: events.length, 
-      responseTimeMs 
-    }, 'Query Handled');
-
-    return {
-      response: responseText,
-      eventsAnalyzed: events.length,
-      timeRange: {
-        start: timeRange.startTime.toISOString(),
-        end: timeRange.endTime.toISOString()
-      },
-      conversationId: conversation.conversationId
-    };
+  // Get or create conversation
+  let conversation = params.conversationId
+    ? await Conversation.findOne({ conversationId: params.conversationId })
+    : null;
+  if (!conversation) {
+    conversation = await Conversation.create({ userId: params.userId, messages: [] });
   }
 
-  private static async getOrCreateConversation(userId: string, conversationId?: string) {
-    if (conversationId) {
-      const conv = await Conversation.findOne({ conversationId, userId });
-      if (conv) return conv;
-    }
+  // Build prompt
+  const prompt = ChatPromptTemplate.fromMessages([
+    ['system', SYSTEM_PROMPT],
+    ...conversation.messages.slice(-5).map((m: any) => [m.role, m.content] as [string, string]),
+    ['human', '{userQuery}'],
+  ]);
 
-    return new Conversation({
-      conversationId: conversationId || uuidv4(),
-      userId,
-      messages: []
+  const chain = prompt.pipe(getLLM()).pipe(new StringOutputParser());
+
+  let response: string;
+  try {
+    response = await chain.invoke({
+      currentTime: new Date().toLocaleString(),
+      cameraCount: '3',
+      timeRange: ctx.timeRange.label,
+      events: ctx.events.length > 0
+        ? JSON.stringify(ctx.events, null, 2)
+        : 'No events found in this time period.',
+      userQuery: params.query,
     });
+  } catch (err: any) {
+    logger.error({ err }, 'OpenAI API error');
+    if (err.status === 429) throw new Error('AI service rate limited. Please try again in a moment.');
+    throw new Error('AI service temporarily unavailable.');
   }
 
-  private static async updateConversation(conversation: any, userQuery: string, assistantResponse: string) {
-    const userMsg: IMessage = { role: 'user', content: userQuery, timestamp: new Date() };
-    const assistantMsg: IMessage = { role: 'assistant', content: assistantResponse, timestamp: new Date() };
+  // Save to conversation history
+  conversation.messages.push(
+    { role: 'user', content: params.query, timestamp: new Date() },
+    { role: 'assistant', content: response, timestamp: new Date() }
+  );
+  if (conversation.messages.length > 40) conversation.messages = conversation.messages.slice(-40);
+  await conversation.save();
 
-    conversation.messages.push(userMsg, assistantMsg);
+  logger.info({
+    userId: params.userId,
+    eventsAnalyzed: ctx.count,
+    responseMs: Date.now() - start,
+  }, 'AI query processed');
 
-    // Maintain max 20 messages per conversation
-    if (conversation.messages.length > 20) {
-      conversation.messages = conversation.messages.slice(-20);
-    }
-
-    await conversation.save();
-  }
+  return {
+    response,
+    eventsAnalyzed: ctx.count,
+    timeRange: ctx.timeRange.label,
+    conversationId: conversation.conversationId,
+  };
 }
