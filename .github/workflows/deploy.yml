@@ -1,0 +1,58 @@
+name: Continuous Deployment
+
+on:
+  workflow_run:
+    workflows: ["Build and Push"]
+    types:
+      - completed
+    branches: [ main ]
+
+env:
+  KUBECONFIG_SECRET: ${{ secrets.KUBE_CONFIG }}
+  SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Update Kubernetes Deployments
+        run: |
+          kubectl set image deployment/api-gateway api-gateway=ghcr.io/${{ github.repository }}-api-gateway:latest -n sass-system
+          kubectl set image deployment/auth-service auth-service=ghcr.io/${{ github.repository }}-auth-service:latest -n sass-system
+          kubectl set image deployment/alert-service alert-service=ghcr.io/${{ github.repository }}-alert-service:latest -n sass-system
+          kubectl set image deployment/genai-service genai-service=ghcr.io/${{ github.repository }}-genai-service:latest -n sass-system
+          kubectl set image deployment/frontend frontend=ghcr.io/${{ github.repository }}-frontend:latest -n sass-system
+          
+          # Force a restart to pick up latest config if needed
+          kubectl rollout restart deployment/detection-service -n sass-system
+
+      - name: Verify Rollout
+        run: |
+          kubectl rollout status deployment/api-gateway -n sass-system
+          kubectl rollout status deployment/auth-service -n sass-system
+          kubectl rollout status deployment/alert-service -n sass-system
+          kubectl rollout status deployment/genai-service -n sass-system
+          kubectl rollout status deployment/frontend -n sass-system
+
+      - name: Slack Notification
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
+        env:
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK }}

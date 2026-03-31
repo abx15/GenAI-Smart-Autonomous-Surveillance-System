@@ -41,3 +41,8 @@ pip-delete-this-directory.txt
 # OS
 .DS_Store
 Thumbs.db
+
+
+INTEGRATION_CHECKLIST.md
+
+Folder.structer.md

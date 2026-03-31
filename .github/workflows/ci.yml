@@ -1,0 +1,55 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+          
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Lint and Type-Check (Services)
+        run: |
+          pnpm --filter "./services/*" lint
+          pnpm --filter "./services/*" type-check
+          
+      - name: Lint and Type-Check (Frontend)
+        run: |
+          cd frontend
+          pnpm lint
+          pnpm type-check
+
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install Linting Tools
+        run: |
+          pip install flake8 mypy
+          
+      - name: Lint Detection Service
+        run: |
+          cd services/detection-service
+          flake8 .
+          mypy .

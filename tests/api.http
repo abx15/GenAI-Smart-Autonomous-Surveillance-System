@@ -1,0 +1,212 @@
+### ─── AUTH SERVICE ───────────────────────────────────────
+
+### 1. Register Admin User
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "admin@sass.local",
+  "password": "Admin@123",
+  "firstName": "Arjun",
+  "lastName": "Sharma",
+  "role": "admin"
+}
+
+### 2. Login
+# @name loginResponse
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@sass.local",
+  "password": "Admin@123"
+}
+
+### (Save token from login response)
+@accessToken = {{loginResponse.response.body.accessToken}}
+@refreshToken = {{loginResponse.response.body.refreshToken}}
+
+### 3. Get Current User
+GET http://localhost:3000/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### 4. Refresh Token
+POST http://localhost:3000/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### 5. Change Password
+PUT http://localhost:3000/api/auth/change-password
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "oldPassword": "Admin@123",
+  "newPassword": "Admin@456"
+}
+
+### 6. Logout
+POST http://localhost:3000/api/auth/logout
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### ─── EVENT SERVICE ──────────────────────────────────────
+
+### 7. Get All Events
+GET http://localhost:3000/api/events?limit=20
+Authorization: Bearer {{accessToken}}
+
+### 8. Get Events with Filters
+GET http://localhost:3000/api/events?type=intrusion&severity=critical&camera=CAM-01&limit=10
+Authorization: Bearer {{accessToken}}
+
+### 9. Get Recent Events (Last 10 minutes)
+GET http://localhost:3000/api/events/recent?minutes=10
+Authorization: Bearer {{accessToken}}
+
+### 10. Get Event Stats
+GET http://localhost:3000/api/events/stats
+Authorization: Bearer {{accessToken}}
+
+### 11. Get Event by ID
+GET http://localhost:3000/api/events/{{eventId}}
+Authorization: Bearer {{accessToken}}
+
+### 12. Resolve Event
+PUT http://localhost:3000/api/events/{{eventId}}/resolve
+Authorization: Bearer {{accessToken}}
+
+### 13. Create Zone
+POST http://localhost:3000/api/zones
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Test Zone",
+  "cameraId": "CAM-01",
+  "type": "restricted",
+  "coordinates": [[100,100],[400,100],[400,300],[100,300]]
+}
+
+### 14. Get All Zones
+GET http://localhost:3000/api/zones
+Authorization: Bearer {{accessToken}}
+
+### ─── ALERT SERVICE ──────────────────────────────────────
+
+### 15. Get Alert History
+GET http://localhost:3000/api/alerts/history?limit=20
+Authorization: Bearer {{accessToken}}
+
+### 16. Get Unacknowledged Alerts
+GET http://localhost:3000/api/alerts/unacknowledged
+Authorization: Bearer {{accessToken}}
+
+### 17. Acknowledge Alert
+PUT http://localhost:3000/api/alerts/{{alertId}}/acknowledge
+Authorization: Bearer {{accessToken}}
+
+### 18. Live Stats (active connections)
+GET http://localhost:3000/api/alerts/stats/live
+Authorization: Bearer {{accessToken}}
+
+### ─── GENAI SERVICE ──────────────────────────────────────
+
+### 19. Natural Language Query
+# @name aiQuery
+POST http://localhost:3000/api/ai/query
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "query": "Last 10 minutes mein kya hua?"
+}
+
+@aiConvId = {{aiQuery.response.body.conversationId}}
+
+### 20. Follow-up Query (with conversation context)
+POST http://localhost:3000/api/ai/query
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "query": "Koi critical intrusion tha?",
+  "conversationId": "{{aiConvId}}"
+}
+
+### 21. Query with Camera Filter
+POST http://localhost:3000/api/ai/query
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "query": "CAM-01 pe kya activity thi aaj?",
+  "cameraId": "CAM-01"
+}
+
+### 22. Summarize Specific Event
+POST http://localhost:3000/api/ai/summarize
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "eventId": "{{eventId}}"
+}
+
+### 23. Generate Shift Report
+POST http://localhost:3000/api/ai/report
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "shiftStart": "2024-01-15T09:00:00.000Z",
+  "shiftEnd": "2024-01-15T17:00:00.000Z"
+}
+
+### 24. Get Conversation History
+GET http://localhost:3000/api/ai/conversations/{{userId}}
+Authorization: Bearer {{accessToken}}
+
+### 25. Delete Conversation
+DELETE http://localhost:3000/api/ai/conversations/{{aiConvId}}
+Authorization: Bearer {{accessToken}}
+
+### ─── DETECTION SERVICE (Direct) ──────────────────────────
+
+### 26. Detection Health Check
+GET http://localhost:8001/health
+
+### 27. Detection Stats
+GET http://localhost:8001/stats
+
+### 28. Update Zone Coordinates
+POST http://localhost:8001/config
+Content-Type: application/json
+
+{
+  "zone_coordinates": [[0,0],[640,0],[640,480],[0,480]]
+}
+
+### ─── HEALTH CHECKS ─────────────────────────────────────
+
+### 29. API Gateway Health
+GET http://localhost:3000/health
+
+### 30. Auth Service Health (direct)
+GET http://localhost:3001/health
+
+### 31. Event Service Health (direct)
+GET http://localhost:3002/health
+
+### 32. Alert Service Health (direct)
+GET http://localhost:3003/health
+
+### 33. GenAI Service Health (direct)
+GET http://localhost:3004/health

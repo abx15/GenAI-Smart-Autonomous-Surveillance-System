@@ -2,15 +2,29 @@
   "name": "sass-system",
   "version": "1.0.0",
   "description": "GenAI Smart Autonomous Surveillance System (SASS)",
+  "type": "module",
   "private": true,
   "scripts": {
-    "dev": "docker-compose -f infra/docker/docker-compose.yml up -d && pnpm -r run dev"
+    "dev": "docker-compose -f infra/docker/docker-compose.yml up -d && pnpm -r run dev",
+    "seed": "ts-node -r dotenv/config scripts/seed.ts",
+    "test:api": "bash tests/test-runner.sh"
   },
   "keywords": [
     "surveillance",
     "ai",
     "genai"
   ],
-  "author": "",
-  "license": "ISC"
+  "author": "Arun Kumar Bind",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.3.1",
+    "mongoose": "^9.3.3"
+  }
 }

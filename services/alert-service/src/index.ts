@@ -1,5 +1,4 @@
 import Fastify from 'fastify';
-import socketioServer from '@fastify/socket.io';
 import fastifyJwt from '@fastify/jwt';
 import cors from '@fastify/cors';
 import mongoose from 'mongoose';

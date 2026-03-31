@@ -1,0 +1,323 @@
+# API Gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: sass-system
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: ghcr.io/abx15/sass-api-gateway:latest
+        ports:
+        - containerPort: 4000
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        - secretRef:
+            name: sass-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4000
+          initialDelaySeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 4000
+          initialDelaySeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-service
+  namespace: sass-system
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - port: 4000
+    targetPort: 4000
+    nodePort: 30080
+  type: NodePort
+---
+# Auth Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: sass-system
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: ghcr.io/abx15/sass-auth-service:latest
+        ports:
+        - containerPort: 4001
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        - secretRef:
+            name: sass-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4001
+          initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service-service
+  namespace: sass-system
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 4001
+    targetPort: 4001
+  type: ClusterIP
+---
+# Alert Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-service
+  namespace: sass-system
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: alert-service
+  template:
+    metadata:
+      labels:
+        app: alert-service
+    spec:
+      containers:
+      - name: alert-service
+        image: ghcr.io/abx15/sass-alert-service:latest
+        ports:
+        - containerPort: 4003
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        - secretRef:
+            name: sass-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4003
+          initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service-service
+  namespace: sass-system
+spec:
+  selector:
+    app: alert-service
+  ports:
+  - port: 4003
+    targetPort: 4003
+  type: ClusterIP
+---
+# GenAI Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: genai-service
+  namespace: sass-system
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: genai-service
+  template:
+    metadata:
+      labels:
+        app: genai-service
+    spec:
+      containers:
+      - name: genai-service
+        image: ghcr.io/abx15/sass-genai-service:latest
+        ports:
+        - containerPort: 4004
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        - secretRef:
+            name: sass-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4004
+          initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: genai-service-service
+  namespace: sass-system
+spec:
+  selector:
+    app: genai-service
+  ports:
+  - port: 4004
+    targetPort: 4004
+  type: ClusterIP
+---
+# Detection Service (Python/AI)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detection-service
+  namespace: sass-system
+spec:
+  replicas: 1 # Strictly 1 as per requirements (webcam/serial access)
+  selector:
+    matchLabels:
+      app: detection-service
+  template:
+    metadata:
+      labels:
+        app: detection-service
+    spec:
+      containers:
+      - name: detection-service
+        image: ghcr.io/abx15/sass-detection-service:latest
+        ports:
+        - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        - secretRef:
+            name: sass-secrets
+        resources:
+          requests:
+            cpu: 200m # Higher requests for CV
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detection-service-service
+  namespace: sass-system
+spec:
+  selector:
+    app: detection-service
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: ClusterIP
+---
+# Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: sass-system
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: ghcr.io/abx15/sass-frontend:latest
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: sass-config
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: sass-system
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP

@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: sass-system
+spec:
+  serviceName: "mongodb-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:7
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongodb-v-store
+          mountPath: /data/db
+        env:
+        - name: MONGO_INITDB_DATABASE
+          value: "sass"
+        livenessProbe:
+          exec:
+            command:
+            - echo
+            - 'db.runCommand("ping").ok'
+            - |
+            - mongosh
+            - localhost:27017/sass
+            - --quiet
+          initialDelaySeconds: 30
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-v-store
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: sass-system
+spec:
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+  type: ClusterIP

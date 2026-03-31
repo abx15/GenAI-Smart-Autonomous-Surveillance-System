@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sass-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sass-config
+  namespace: sass-system
+data:
+  KAFKA_BROKERS: "kafka-service:9092"
+  MONGODB_URI: "mongodb://mongodb-service:27017/sass"
+  NODE_ENV: "production"
+  GATEWAY_PORT: "4000"
+  AUTH_SERVICE_PORT: "4001"
+  EVENT_SERVICE_PORT: "4002"
+  ALERT_SERVICE_PORT: "4003"
+  GENAI_SERVICE_PORT: "4004"
+  LOG_SERVICE_PORT: "4005"
+  DETECTION_SERVICE_PORT: "5000"
+  FRONTEND_PORT: "3000"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sass-secrets
+  namespace: sass-system
+type: Opaque
+data:
+  # Base64 encoded placeholders. 
+  # e.g. echo -n 'super_secret' | base64
+  MONGODB_URI: "bW9uZ29kYjovL21vbmdvZGItc2VydmljZToyNzAxNy9zYXNz" # mongodb://mongodb-service:27017/sass
+  JWT_SECRET: "c3VwZXJfc2VjcmV0X2p3dF9rZXlfaGVyZQ==" # super_secret_jwt_key_here
+  OPENAI_API_KEY: "c2stcGxhY2Vob2xkZXI=" # sk-placeholder

@@ -4,13 +4,12 @@
   "description": "Alert Service for SASS",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only src/index-simple.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "fastify": "^4.27.0",
-    "@fastify/socket.io": "^7.0.0",
     "@fastify/jwt": "^8.0.0",
     "@fastify/cors": "^9.0.1",
     "socket.io": "^4.7.5",
