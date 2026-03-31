@@ -1,0 +1,16 @@
+{
+  "name": "sass-system",
+  "version": "1.0.0",
+  "description": "GenAI Smart Autonomous Surveillance System (SASS)",
+  "private": true,
+  "scripts": {
+    "dev": "docker-compose -f infra/docker/docker-compose.yml up -d && pnpm -r run dev"
+  },
+  "keywords": [
+    "surveillance",
+    "ai",
+    "genai"
+  ],
+  "author": "",
+  "license": "ISC"
+}

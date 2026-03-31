@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: sass-zookeeper
+    networks:
+      - sass-network
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: sass-kafka
+    depends_on:
+      - zookeeper
+    networks:
+      - sass-network
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: sass-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - sass-network
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  mongodb:
+    image: mongo:7
+    container_name: sass-mongodb
+    networks:
+      - sass-network
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: echo "rs.status()" | mongosh --port 27017 --quiet || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api-gateway:
+    build: 
+      context: ../../
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: sass-api-gateway
+    env_file: ../../.env
+    ports:
+      - "${GATEWAY_PORT:-4000}:${GATEWAY_PORT:-4000}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  auth-service:
+    build: 
+      context: ../../
+      dockerfile: services/auth-service/Dockerfile
+    container_name: sass-auth-service
+    env_file: ../../.env
+    ports:
+      - "${AUTH_SERVICE_PORT:-4001}:${AUTH_SERVICE_PORT:-4001}"
+    networks:
+      - sass-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  event-service:
+    build: 
+      context: ../../
+      dockerfile: services/event-service/Dockerfile
+    container_name: sass-event-service
+    env_file: ../../.env
+    ports:
+      - "${EVENT_SERVICE_PORT:-4002}:${EVENT_SERVICE_PORT:-4002}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  alert-service:
+    build: 
+      context: ../../
+      dockerfile: services/alert-service/Dockerfile
+    container_name: sass-alert-service
+    env_file: ../../.env
+    ports:
+      - "${ALERT_SERVICE_PORT:-4003}:${ALERT_SERVICE_PORT:-4003}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  genai-service:
+    build: 
+      context: ../../
+      dockerfile: services/genai-service/Dockerfile
+    container_name: sass-genai-service
+    env_file: ../../.env
+    ports:
+      - "${GENAI_SERVICE_PORT:-4004}:${GENAI_SERVICE_PORT:-4004}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  log-service:
+    build: 
+      context: ../../
+      dockerfile: services/log-service/Dockerfile
+    container_name: sass-log-service
+    env_file: ../../.env
+    ports:
+      - "${LOG_SERVICE_PORT:-4005}:${LOG_SERVICE_PORT:-4005}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  detection-service:
+    build: 
+      context: ../../
+      dockerfile: services/detection-service/Dockerfile
+    container_name: sass-detection-service
+    env_file: ../../.env
+    ports:
+      - "${DETECTION_SERVICE_PORT:-5000}:${DETECTION_SERVICE_PORT:-5000}"
+    networks:
+      - sass-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  frontend:
+    build: 
+      context: ../../
+      dockerfile: frontend/Dockerfile
+    container_name: sass-frontend
+    env_file: ../../.env
+    ports:
+      - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"
+    networks:
+      - sass-network
+
+networks:
+  sass-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  kafka-data:
