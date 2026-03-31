@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { 
   BarChart3, 
   Video, 
@@ -12,6 +12,7 @@ import {
   Terminal
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useAuthStore } from "../../store/auth";
 
 const menuItems = [
   { icon: BarChart3, label: "DASHBOARD", href: "/dashboard" },
@@ -24,6 +25,15 @@ const menuItems = [
 
 export const Sidebar = () => {
   const pathname = usePathname();
+  const router = useRouter();
+  const logout = useAuthStore(state => state.logout);
+
+  const handleLogout = () => {
+    logout();
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    router.push('/login');
+  };
 
   return (
     <aside className="w-64 border-r border-card-border bg-background flex flex-col h-full sticky left-0 top-16 z-40 overflow-y-auto">
@@ -71,7 +81,10 @@ export const Sidebar = () => {
           </div>
         </div>
 
-        <button className="w-full mt-6 flex items-center justify-center gap-2 py-3 border border-card-border text-muted hover:text-danger hover:border-danger transition-colors font-mono text-sm tracking-widest">
+        <button 
+          onClick={handleLogout}
+          className="w-full mt-6 flex items-center justify-center gap-2 py-3 border border-card-border text-muted hover:text-danger hover:border-danger transition-colors font-mono text-sm tracking-widest"
+        >
           <LogOut className="w-4 h-4" />
           <span>TERMINATE</span>
         </button>
