@@ -14,6 +14,20 @@ class ZoneConfigRequest(BaseModel):
 
 @router.get("/health")
 def health_check(request: Request) -> Dict[str, Any]:
+    """
+    Health check endpoint for the detection service.
+    
+    Returns:
+        dict: Service status including model load state and camera connection status.
+        
+    Response example:
+        {
+            "status": "ok",
+            "model_loaded": True,
+            "camera_connected": True,
+            "timestamp": "2024-01-15T10:30:00Z"
+        }
+    """
     # app state
     camera_connected = request.app.state.camera_connected
     model_loaded = request.app.state.model_loaded
@@ -25,6 +39,17 @@ def health_check(request: Request) -> Dict[str, Any]:
 
 @router.post("/config")
 def update_config(config: ZoneConfigRequest):
+    """
+    Update detection configuration at runtime (no restart needed).
+    
+    Args:
+        config (ZoneConfigRequest): {
+            "zone_coordinates": list[list[int]] - Polygon points [[x,y], ...] for restricted zones
+        }
+        
+    Returns:
+        dict: { "status": "success", "message": "Config updated" }
+    """
     try:
         behavior_service.update_zones(config.zone_coordinates)
         return {"status": "success", "message": "Zone coordinates updated"}
@@ -34,6 +59,17 @@ def update_config(config: ZoneConfigRequest):
 
 @router.get("/stats")
 def get_stats(request: Request) -> Dict[str, Any]:
+    """
+    Get current detection statistics.
+    
+    Returns real-time information about active tracking and detection state.
+    
+    Returns:
+        dict: {
+            "tracked_persons": int,      - Number of persons currently tracked
+            "active_zones": bool,       - Whether monitoring zones are defined
+        }
+    """
     active_tracks = request.app.state.active_tracks_count
     return {
         "tracked_persons": active_tracks,
@@ -56,4 +92,19 @@ def generate_frames(request: Request):
 
 @router.get("/stream")
 def stream_video(request: Request):
+    """
+    MJPEG video stream endpoint.
+    
+    Streams live webcam feed with YOLOv8 bounding boxes and tracking overlays.
+    Uses multipart/x-mixed-replace content type for real-time streaming.
+    
+    Note:
+        - Stream runs at ~15 FPS to balance performance and bandwidth
+        - Each frame has bounding boxes drawn for detected persons
+        - Track IDs are shown above each bounding box
+        - Zone overlay is drawn if zones are configured
+        
+    Returns:
+        StreamingResponse: MJPEG stream (multipart/x-mixed-replace; boundary=frame)
+    """
     return StreamingResponse(generate_frames(request), media_type="multipart/x-mixed-replace; boundary=frame")

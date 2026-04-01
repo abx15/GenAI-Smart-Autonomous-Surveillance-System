@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "docker-compose -f infra/docker/docker-compose.yml up -d && pnpm -r run dev",
+    "dev": "docker-compose -f infra/docker/docker-compose.infra.yml up -d && pnpm -r run dev",
     "seed": "ts-node -r dotenv/config scripts/seed.ts",
     "test:api": "bash tests/test-runner.sh"
   },

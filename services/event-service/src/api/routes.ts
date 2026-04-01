@@ -6,13 +6,33 @@ import { logger } from '../../../../shared/utils/logger';
 
 export async function eventRoutes(app: FastifyInstance) {
 
-  // Health
+  /**
+   * @route   GET /health
+   * @desc    Check event service health and status
+   * @access  Public
+   * @returns { success, data: { status, service, timestamp } }
+   */
   app.get('/health', async () => ({
     success: true,
     data: { status: 'ok', service: 'event-service', timestamp: new Date().toISOString() }
   }));
 
-  // GET /events — list with filters + pagination
+  /**
+   * @route   GET /events
+   * @desc    Fetch paginated surveillance events with optional filters
+   * @access  Private (requires JWT Bearer token)
+   * @query   {string}  [type]       - Filter by event type: intrusion | loitering | zone_entry | zone_exit
+   * @query   {string}  [severity]   - Filter by severity: critical | high | medium | low
+   * @query   {string}  [camera]     - Filter by camera ID (e.g., CAM-01)
+   * @query   {boolean} [resolved]   - Filter by resolved status (true/false)
+   * @query   {number}  [limit=50]   - Max results per page (default: 50)
+   * @query   {number}  [page=1]     - Page number for pagination
+   * @query   {string}  [startDate]  - ISO date string: filter events after this date
+   * @query   {string}  [endDate]    - ISO date string: filter events before this date
+   * @query   {number}  [minutes]    - Shortcut: get events from last N minutes
+   * @returns {object}  { success, data: Event[], pagination: { total, page, limit, totalPages } }
+   * @example GET /events?type=intrusion&severity=critical&limit=20&page=1
+   */
   app.get('/events', async (req, reply) => {
     try {
       const { type, severity, camera, resolved, limit = 50, page = 1, startDate, endDate, minutes } = req.query as any;
@@ -44,7 +64,12 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /events/stats
+  /**
+   * @route   GET /events/stats
+   * @desc    Get aggregated event statistics by type and severity
+   * @access  Private
+   * @returns { success, data: { typeCounts, severityCounts, statusCounts } }
+   */
   app.get('/events/stats', async (req, reply) => {
     try {
       const stats = await eventStore.getStats();
@@ -54,7 +79,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /events/recent
+  /**
+   * @route   GET /events/recent
+   * @desc    Fetch events from the last N minutes (default: 10)
+   * @access  Private
+   * @query   {number} [minutes=10] - Time window in minutes
+   * @returns { success, data: Event[] }
+   */
   app.get('/events/recent', async (req, reply) => {
     try {
       const { minutes = 10 } = req.query as any;
@@ -65,7 +96,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /events/:eventId
+  /**
+   * @route   GET /events/:eventId
+   * @desc    Fetch detailed information about a single event
+   * @access  Private
+   * @param   {string} eventId - Unique event UUID
+   * @returns { success, data: Event }
+   */
   app.get('/events/:eventId', async (req, reply) => {
     try {
       const { eventId } = req.params as any;
@@ -77,7 +114,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // PUT /events/:eventId/resolve
+  /**
+   * @route   PUT /events/:eventId/resolve
+   * @desc    Mark a surveillance event as resolved (dismissed)
+   * @access  Private (requires operator/admin role)
+   * @param   {string} eventId - Unique event UUID
+   * @returns { success, data: Event, message }
+   */
   app.put('/events/:eventId/resolve', async (req, reply) => {
     try {
       const { eventId } = req.params as any;
@@ -89,7 +132,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // POST /zones
+  /**
+   * @route   POST /zones
+   * @desc    Define a new surveillance zone (restricted, monitoring, entry, exit)
+   * @access  Private (admin only)
+   * @body    { zoneId, name, type, cameraId, coordinates: [[x,y], ...] }
+   * @returns { success, data: Zone, message }
+   */
   app.post('/zones', async (req, reply) => {
     try {
       const body = req.body as any;
@@ -101,7 +150,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /zones
+  /**
+   * @route   GET /zones
+   * @desc    List all surveillance zones, optionally filtered by camera
+   * @access  Private
+   * @query   {string} [cameraId] - Filter zones by camera ID
+   * @returns { success, data: Zone[] }
+   */
   app.get('/zones', async (req, reply) => {
     try {
       const { cameraId } = req.query as any;
@@ -113,7 +168,13 @@ export async function eventRoutes(app: FastifyInstance) {
     }
   });
 
-  // DELETE /zones/:zoneId
+  /**
+   * @route   DELETE /zones/:zoneId
+   * @desc    Delete a surveillance zone configuration
+   * @access  Private (admin only)
+   * @param   {string} zoneId - Unique zone ID
+   * @returns { success, message: 'Zone deleted' }
+   */
   app.delete('/zones/:zoneId', async (req, reply) => {
     try {
       const { zoneId } = req.params as any;

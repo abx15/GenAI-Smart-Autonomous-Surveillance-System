@@ -3,6 +3,17 @@ import mongoose from 'mongoose';
 // Reference event-service Event model by collection name
 const EventCollection = mongoose.connection.collection.bind(mongoose.connection);
 
+/**
+ * TIME RANGE PARSER
+ * Extracts structured start/end dates from natural language time expressions.
+ * 
+ * Supported patterns:
+ *   "last 10 minutes" / "last 10 min" → now - 10 minutes
+ *   "last 2 hours"                    → now - 2 hours
+ *   "today" / "aaj"                   → midnight to now
+ *   "this week" / "hafta"             → 7 days ago to now
+ *   (default)                         → last 30 minutes
+ */
 function parseTimeRange(query: string): { startTime: Date; endTime: Date; label: string } {
   const now = new Date();
   const lower = query.toLowerCase();

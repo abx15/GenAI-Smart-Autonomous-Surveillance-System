@@ -4,13 +4,29 @@ import { publishEvent } from '../kafka/producer';
 import { logger } from '../../../../shared/utils/logger';
 import { updateTrack, isLoitering, getDuration, removeTrack } from './loiteringTracker';
 
-// Track open (ongoing) events to avoid duplicates
+/**
+ * DEDUPLICATION: We use an in-memory Map to track "open" (ongoing) events.
+ * Key format: `${trackId}:${eventType}`
+ * 
+ * If the same person (trackId) already has an open event of a specific type
+ * (e.g., intrusion), we skip creating a new one to prevent duplicate alerts.
+ * 
+ * Events are "closed" (endTime set) when the track disappears from the camera
+ * view, or when the person leaves the specific zone.
+ */
 const openEvents = new Map<string, string>(); // key: `${trackId}:${type}`, value: eventId
 
 function getEventKey(trackId: number, type: string): string {
   return `${trackId}:${type}`;
 }
 
+/**
+ * EVENT ENGINE: Core logic for converting raw detections into surveillance events.
+ * Handles:
+ * - Zone Intrusion (critical alerts for restricted areas)
+ * - Loitering Detection (high alerts for prolonged stay)
+ * - Zone Entry/Exit (low/medium logs for monitoring)
+ */
 export const eventEngine = {
   async processDetection(detection: any): Promise<void> {
     const { track_id, behavior, camera_id, zone_id, timestamp, bbox, confidence } = detection;

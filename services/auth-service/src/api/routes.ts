@@ -14,12 +14,25 @@ const registerSchema = z.object({
 
 export async function authRoutes(app: FastifyInstance) {
 
+  /**
+   * @route   GET /health
+   * @desc    Check auth service health and status
+   * @access  Public
+   * @returns { success, data: { status, service, timestamp } }
+   */
   app.get('/health', async () => ({
     success: true,
     data: { status: 'ok', service: 'auth-service', timestamp: new Date().toISOString() }
   }));
 
-  // POST /auth/register
+  /**
+   * @route   POST /auth/register
+   * @desc    Register a new user account
+   * @access  Public
+   * @body    { email, password (min 8 chars, 1 uppercase, 1 number), firstName, lastName, role }
+   * @returns { success, data: { accessToken, refreshToken, user } }
+   * @note    Password is hashed with bcrypt (rounds: 12) before storage
+   */
   app.post('/auth/register', async (req, reply) => {
     try {
       const body = registerSchema.parse(req.body);
@@ -42,7 +55,14 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
-  // POST /auth/login
+  /**
+   * @route   POST /auth/login
+   * @desc    Authenticate user and return JWT tokens
+   * @access  Public
+   * @body    { email, password }
+   * @returns { success, data: { accessToken (15m), refreshToken (7d), user } }
+   * @note    Updates user.lastLogin on successful auth
+   */
   app.post('/auth/login', async (req, reply) => {
     try {
       const { email, password } = req.body as any;
@@ -67,7 +87,14 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
-  // POST /auth/refresh
+  /**
+   * @route   POST /auth/refresh
+   * @desc    Rotate access token using a valid refresh token
+   * @access  Public (requires valid refresh token in body)
+   * @body    { refreshToken }
+   * @returns { success, data: { accessToken, refreshToken } }
+   * @note    Old refresh token is revoked on use (rotation strategy)
+   */
   app.post('/auth/refresh', async (req, reply) => {
     try {
       const { refreshToken } = req.body as any;
@@ -90,7 +117,12 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /auth/me — requires auth
+  /**
+   * @route   GET /auth/me
+   * @desc    Get currently authenticated user's profile
+   * @access  Private
+   * @returns { success, data: { userId, email, role, firstName, lastName, lastLogin } }
+   */
   app.get('/auth/me', {
     preHandler: async (req, reply) => {
       try { await req.jwtVerify(); } catch { reply.status(401).send({ success: false, error: 'UNAUTHORIZED' }); }
@@ -102,7 +134,13 @@ export async function authRoutes(app: FastifyInstance) {
     return { success: true, data: { userId: user.userId, email: user.email, role: user.role, firstName: user.firstName, lastName: user.lastName, lastLogin: user.lastLogin } };
   });
 
-  // POST /auth/logout
+  /**
+   * @route   POST /auth/logout
+   * @desc    Revoke the provided refresh token (logout)
+   * @access  Public
+   * @body    { refreshToken }
+   * @returns { success, message: 'Logged out successfully' }
+   */
   app.post('/auth/logout', async (req, reply) => {
     const { refreshToken } = req.body as any;
     if (refreshToken) {
