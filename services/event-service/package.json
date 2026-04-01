@@ -10,7 +10,7 @@
   "dependencies": {
     "fastify": "^4.24.3",
     "@fastify/cors": "^9.0.1",
-    "kafkajs": "^2.2.4",
+    "axios": "^1.7.2",
     "mongoose": "^9.3.3",
     "zod": "^3.22.4"
   },

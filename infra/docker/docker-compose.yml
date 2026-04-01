@@ -1,50 +1,6 @@
 version: '3.8'
 
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: sass-zookeeper
-    networks:
-      - sass-network
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: sass-kafka
-    depends_on:
-      - zookeeper
-    networks:
-      - sass-network
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: sass-kafka-ui
-    depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      - sass-network
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
   mongodb:
     image: mongo:7
@@ -72,8 +28,6 @@ services:
     networks:
       - sass-network
     depends_on:
-      kafka:
-        condition: service_healthy
       mongodb:
         condition: service_healthy
 
@@ -97,12 +51,14 @@ services:
       dockerfile: services/event-service/Dockerfile
     container_name: sass-event-service
     env_file: ../../.env
+    environment:
+      - ALERT_SERVICE_URL=http://alert-service:4003
     ports:
       - "${EVENT_SERVICE_PORT:-4002}:${EVENT_SERVICE_PORT:-4002}"
     networks:
       - sass-network
     depends_on:
-      kafka:
+      mongodb:
         condition: service_healthy
 
   alert-service:
@@ -116,7 +72,7 @@ services:
     networks:
       - sass-network
     depends_on:
-      kafka:
+      mongodb:
         condition: service_healthy
 
   genai-service:
@@ -130,7 +86,7 @@ services:
     networks:
       - sass-network
     depends_on:
-      kafka:
+      mongodb:
         condition: service_healthy
 
   log-service:
@@ -144,7 +100,7 @@ services:
     networks:
       - sass-network
     depends_on:
-      kafka:
+      mongodb:
         condition: service_healthy
 
   detection-service:
@@ -153,12 +109,14 @@ services:
       dockerfile: services/detection-service/Dockerfile
     container_name: sass-detection-service
     env_file: ../../.env
+    environment:
+      - EVENT_SERVICE_URL=http://event-service:4002
     ports:
       - "${DETECTION_SERVICE_PORT:-5000}:${DETECTION_SERVICE_PORT:-5000}"
     networks:
       - sass-network
     depends_on:
-      kafka:
+      mongodb:
         condition: service_healthy
 
   frontend:
@@ -178,4 +136,3 @@ networks:
 
 volumes:
   mongo-data:
-  kafka-data:

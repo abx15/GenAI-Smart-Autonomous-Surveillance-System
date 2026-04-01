@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { Event } from '../models/Event';
 import { Zone } from '../models/Zone';
 import { eventStore } from '../services/eventStore';
+import { eventEngine } from '../services/eventEngine';
 import { logger } from '../../../../shared/utils/logger';
 
 export async function eventRoutes(app: FastifyInstance) {
@@ -183,6 +184,38 @@ export async function eventRoutes(app: FastifyInstance) {
       return { success: true, message: 'Zone deleted' };
     } catch (err) {
       return reply.status(500).send({ success: false, error: 'INTERNAL_ERROR', message: 'Failed to delete zone' });
+    }
+  });
+
+  /**
+   * @route   POST /internal/detection
+   * @desc    Internal route — detection-service sends raw detection data here.
+   *          This replaces the Kafka raw.detections topic.
+   *          NOT exposed via API Gateway (internal only).
+   * @access  Internal (no auth required — only called by detection-service)
+   * @body    DetectionResult: { track_id, behavior, camera_id, zone_id, timestamp, bbox, confidence }
+   * @returns { success: boolean }
+   */
+  app.post('/internal/detection', async (req, reply) => {
+    try {
+      const detection = req.body as any;
+
+      if (!detection || !detection.track_id) {
+        return reply.status(400).send({ success: false, error: 'Invalid detection payload' });
+      }
+
+      logger.debug(
+        { trackId: detection.track_id, behavior: detection.behavior, camera: detection.camera_id },
+        'Internal detection received'
+      );
+
+      // Process detection → generate event if needed
+      await eventEngine.processDetection(detection);
+
+      return { success: true };
+    } catch (err) {
+      logger.error({ err }, 'Internal detection processing failed');
+      return reply.status(500).send({ success: false });
     }
   });
 }

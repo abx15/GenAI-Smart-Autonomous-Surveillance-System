@@ -1,43 +1,40 @@
-import json
-from confluent_kafka import Producer
-from app.core.config import settings
+# Kafka removed — HTTP mode for Render deployment
+# Detection results are sent directly to event-service via HTTP POST
+import httpx
+import os
 from app.core.logger import logger
 
-class KafkaProducerService:
-    def __init__(self):
-        conf = {
-            'bootstrap.servers': settings.KAFKA_BROKERS,
-            'client.id': 'detection-service'
-        }
-        try:
-            self.producer = Producer(conf)
-            logger.info("Kafka Producer initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Kafka Producer: {e}")
-            self.producer = None
+EVENT_SERVICE_URL = os.getenv("EVENT_SERVICE_URL", "http://localhost:3002")
 
-    def delivery_report(self, err, msg):
-        if err is not None:
-            logger.error(f"Message delivery failed: {err}")
-        # else fire-and-forget success
-
-    def produce_detection(self, detection_result: dict) -> None:
-        if self.producer is None:
-            return
-            
-        try:
-            # key = camera_id
-            key = detection_result.get("camera_id", "0")
-            value = json.dumps(detection_result)
-            
-            self.producer.produce(
-                topic=settings.KAFKA_TOPIC_DETECTIONS,
-                key=key,
-                value=value,
-                callback=self.delivery_report
+async def produce_detection(detection_result: dict) -> None:
+    """
+    Send detection result to event-service via HTTP POST.
+    
+    This replaces the Kafka raw.detections topic.
+    Non-blocking — errors are logged but don't crash the detection loop.
+    
+    Args:
+        detection_result: Dict containing track_id, behavior, camera_id,
+                         zone_id, bbox, confidence, timestamp
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                f"{EVENT_SERVICE_URL}/internal/detection",
+                json=detection_result,
+                headers={"Content-Type": "application/json"},
             )
-            self.producer.poll(0)  # non-blocking
-        except Exception as e:
-            logger.error(f"Error producing to Kafka: {e}")
-
-kafka_producer = KafkaProducerService()
+            if response.status_code == 200:
+                logger.debug(
+                    f"Detection sent to event-service: track_id={detection_result.get('track_id')}"
+                )
+            else:
+                logger.warning(
+                    f"Event service returned {response.status_code} for detection"
+                )
+    except httpx.TimeoutException:
+        logger.warning("Event service timeout — detection dropped")
+    except httpx.ConnectError:
+        logger.warning(f"Cannot connect to event-service at {EVENT_SERVICE_URL}")
+    except Exception as e:
+        logger.error(f"Unexpected error sending detection: {e}")
