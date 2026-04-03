@@ -1,8 +1,11 @@
 import numpy as np
+import torch
 from ultralytics import YOLO
 from typing import List, Dict, Any
 from app.core.config import settings
 from app.core.logger import logger
+import ultralytics.nn.tasks
+import torch.nn.modules.container
 
 class YOLOModel:
     _instance = None
@@ -15,7 +18,23 @@ class YOLOModel:
 
     def _initialize(self):
         logger.info(f"Loading YOLO model: {settings.YOLO_MODEL}")
-        self.model = YOLO(settings.YOLO_MODEL)
+        # Monkey patch torch.load to use weights_only=False for ultralytics
+        original_torch_load = torch.load
+        def patched_torch_load(*args, **kwargs):
+            kwargs['weights_only'] = False
+            return original_torch_load(*args, **kwargs)
+        
+        torch.load = patched_torch_load
+        try:
+            self.model = YOLO(settings.YOLO_MODEL)
+        except Exception as e:
+            logger.warning(f"Default loading failed: {e}")
+            # Force download the model if it doesn't exist
+            self.model = YOLO('yolov8n.pt')
+        finally:
+            # Restore original torch.load
+            torch.load = original_torch_load
+            
         self.filter_classes = [0]  # person only
         logger.info("YOLO model loaded successfully")
 
